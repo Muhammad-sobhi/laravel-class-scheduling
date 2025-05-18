@@ -46,7 +46,7 @@ class ConfigureApp extends Command
         $dbPort = $this->ask('Enter your database port (default: 3306)', '3306');
         $dbName = $this->ask('Enter your database name (default: class_scheduling)', 'class_scheduling');
         $dbUsername = $this->ask('Enter your database username (default: root)', 'root');
-        $dbPassword = $this->secret('Enter your database password (leave blank if none)', ''); // Default to empty string
+        $dbPassword = (string) $this->secret('Enter your database password (leave blank if none)', ''); 
 
         // 4. Read the *current* .env content (which now includes the APP_KEY)
         $existingEnvContent = File::get($envPath);
