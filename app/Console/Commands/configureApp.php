@@ -4,7 +4,7 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
-use Illuminate\Support\Facades\Artisan; // Don't forget this!
+use Illuminate\Support\Facades\Artisan;
 
 class ConfigureApp extends Command
 {
@@ -15,63 +15,51 @@ class ConfigureApp extends Command
     {
         $this->info('Welcome! Let\'s configure your application.');
 
-        // Database Configuration
-        $dbHost = $this->ask('Enter your database host (default: 127.0.0.1)', '127.0.0.1');
-        $dbPort = $this->ask('Enter your database port (default: 3306)', '3306');
-        $dbName = $this->ask('Enter your database name (default: class_scheduling)', 'class_scheduling');
-        $dbUsername = $this->ask('Enter your database username (default: root)', 'root');
-        $dbPassword = $this->secret('Enter your database password (leave blank if none)', '');
-
-        // Construct the .env file path
         $envPath = base_path('.env');
+        $envExamplePath = base_path('.env.example');
 
-        // Check if .env file exists. If not, create it with a basic structure.
-        // This ensures APP_KEY= line is always present before key:generate attempts to modify it.
+        // 1. Ensure .env file exists. If not, copy from .env.example.
         if (! File::exists($envPath)) {
-            $initialEnvContent = "APP_NAME=Laravel\n";
-            $initialEnvContent .= "APP_ENV=local\n";
-            $initialEnvContent .= "APP_KEY=\n"; // Crucial: ensure this line exists initially
-            $initialEnvContent .= "APP_DEBUG=true\n";
-            $initialEnvContent .= "APP_URL=http://localhost\n\n";
-            // Add other essential minimums if needed for the app to function before full config
-            
-            try {
-                File::put($envPath, $initialEnvContent);
-                $this->info('.env file created with initial structure.');
-            } catch (\Exception $e) {
-                $this->error('Failed to create .env file: ' . $e->getMessage());
-                return; // Stop if creation fails
+            if (File::exists($envExamplePath)) {
+                File::copy($envExamplePath, $envPath);
+                $this->info('.env file created from .env.example.');
+            } else {
+                // Fallback if .env.example is also missing (less ideal, but robust)
+                File::put($envPath, "APP_NAME=Laravel\nAPP_ENV=local\nAPP_KEY=\nAPP_DEBUG=true\nAPP_URL=http://localhost\n\nDB_CONNECTION=mysql\nDB_HOST=127.0.0.1\nDB_PORT=3306\nDB_DATABASE=\nDB_USERNAME=\nDB_PASSWORD=\n");
+                $this->warn('.env.example not found. Created a basic .env file.');
             }
         }
 
-        // Generate Application Key FIRST
-        // This command will update the APP_KEY= line in the .env file.
-        // It's important to do this before the config is fully written with other variables,
-        // and crucially, before you try to use any services that depend on the key.
+        // 2. Generate Application Key (this will update the APP_KEY line in .env)
+        // It's crucial to run this before other operations if the key isn't set.
         $this->info('Generating application key...');
         try {
             Artisan::call('key:generate');
-            $this->info(Artisan::output()); // Show output of key:generate
+            $this->info(Artisan::output()); // Show output of key:generate (e.g., "Application key set successfully.")
         } catch (\Exception $e) {
             $this->error('Failed to generate application key: ' . $e->getMessage());
             return;
         }
 
-        // Re-read .env content to ensure it has the newly generated APP_KEY
-        // This is important because key:generate might have changed the file.
+        // 3. Prompt for Database Configuration
+        $dbHost = $this->ask('Enter your database host (default: 127.0.0.1)', '127.0.0.1');
+        $dbPort = $this->ask('Enter your database port (default: 3306)', '3306');
+        $dbName = $this->ask('Enter your database name (default: class_scheduling)', 'class_scheduling');
+        $dbUsername = $this->ask('Enter your database username (default: root)', 'root');
+        $dbPassword = $this->secret('Enter your database password (leave blank if none)', ''); // Default to empty string
+
+        // 4. Read the *current* .env content (which now includes the APP_KEY)
         $existingEnvContent = File::get($envPath);
 
-        // Update specific lines in the .env content with user inputs
-        // This approach is safer than rebuilding the entire file, as it preserves
-        // other .env variables that might exist (e.g., mail settings, services, etc.)
-        $existingEnvContent = preg_replace('/^DB_HOST=.*$/m', "DB_HOST=$dbHost", $existingEnvContent);
-        $existingEnvContent = preg_replace('/^DB_PORT=.*$/m', "DB_PORT=$dbPort", $existingEnvContent);
-        $existingEnvContent = preg_replace('/^DB_DATABASE=.*$/m', "DB_DATABASE=$dbName", $existingEnvContent);
-        $existingEnvContent = preg_replace('/^DB_USERNAME=.*$/m', "DB_USERNAME=$dbUsername", $existingEnvContent);
-        $existingEnvContent = preg_replace('/^DB_PASSWORD=.*$/m', "DB_PASSWORD=$dbPassword", $existingEnvContent);
-        
-        // Ensure other common variables are present, or add them if they don't exist
-        // This makes your command more robust if the .env.example doesn't have everything
+        // 5. Update specific lines in the .env content with user inputs using the helper
+        $existingEnvContent = $this->ensureEnvVariable($existingEnvContent, 'DB_HOST', $dbHost);
+        $existingEnvContent = $this->ensureEnvVariable($existingEnvContent, 'DB_PORT', $dbPort);
+        $existingEnvContent = $this->ensureEnvVariable($existingEnvContent, 'DB_DATABASE', $dbName);
+        $existingEnvContent = $this->ensureEnvVariable($existingEnvContent, 'DB_USERNAME', $dbUsername);
+        $existingEnvContent = $this->ensureEnvVariable($existingEnvContent, 'DB_PASSWORD', $dbPassword);
+
+        // Add/ensure other common variables (from your original list)
+        $existingEnvContent = $this->ensureEnvVariable($existingEnvContent, 'APP_NAME', 'Laravel');
         $existingEnvContent = $this->ensureEnvVariable($existingEnvContent, 'APP_ENV', 'local');
         $existingEnvContent = $this->ensureEnvVariable($existingEnvContent, 'APP_DEBUG', 'true');
         $existingEnvContent = $this->ensureEnvVariable($existingEnvContent, 'APP_URL', 'http://localhost');
@@ -85,7 +73,7 @@ class ConfigureApp extends Command
         $existingEnvContent = $this->ensureEnvVariable($existingEnvContent, 'FORWARDED_HEADER_COUNT', '0');
 
 
-        // Write updated content back to .env file
+        // 6. Write the fully updated content back to .env file
         try {
             File::put($envPath, $existingEnvContent);
             $this->info('.env file updated with database configuration and other settings!');
@@ -94,16 +82,17 @@ class ConfigureApp extends Command
             return;
         }
 
-        // Clear the configuration cache AFTER all .env changes are made
+        // 7. Clear the configuration cache AFTER all .env changes are made
         $this->info('Clearing configuration cache...');
         Artisan::call('config:clear');
         Artisan::call('cache:clear');
         $this->info('Configuration cache cleared.');
 
-        // Now, run migrations
+        // 8. Run migrations
         $this->info('Running database migrations...');
         try {
-            $this->call('migrate', ['--force' => true]); // Added --force for production safety check
+            // Added --force for production safety check; ensure DB exists before running
+            $this->call('migrate', ['--force' => true]); 
         } catch (\Exception $e) {
             $this->error('Failed to run migrations: ' . $e->getMessage());
             return;
@@ -111,7 +100,7 @@ class ConfigureApp extends Command
 
         $this->info('Application configuration complete.');
         $this->info('You can now run `php artisan serve` to start the server.');
-        // $this->call('serve'); // Still recommend against auto-serving
+        // $this->call('serve');
     }
 
     /**
@@ -123,14 +112,16 @@ class ConfigureApp extends Command
      */
     protected function ensureEnvVariable(string $content, string $key, string $value): string
     {
-        // Escape value for regex if it contains special characters
-        $escapedValue = preg_quote($value, '/');
+        // To handle values that might contain special regex characters
+        $valueForRegex = preg_quote($value, '/');
         
         // If the key exists, replace its value
         if (preg_match("/^{$key}=.*/m", $content)) {
+            // Replace with the new value, ensure it's quoted if it contains spaces or special characters
             return preg_replace("/^{$key}=.*$/m", "{$key}={$value}", $content);
         }
-        // If the key doesn't exist, append it
-        return $content . "\n{$key}={$value}";
+        // If the key doesn't exist, append it to the end of the file
+        // Add a newline if the content doesn't end with one, to prevent appending on the last line
+        return rtrim($content, "\n") . "\n{$key}={$value}\n";
     }
 }
